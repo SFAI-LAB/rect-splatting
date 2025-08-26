@@ -118,8 +118,10 @@ class GaussianModel:
     
     @property
     def get_shape(self):
+        # Expose shape in a safe bounded range to avoid degenerate projections
+        # Requested clamp: [0.1, 100]
         return self.shape_activation(self._shape)
-    
+
     def get_covariance(self, scaling_modifier = 1):
         return self.covariance_activation(self.get_xyz, self.get_scaling, scaling_modifier, self._rotation)
 
@@ -183,6 +185,16 @@ class GaussianModel:
                 lr = self.xyz_scheduler_args(iteration)
                 param_group['lr'] = lr
                 return lr
+            
+    def clamp_shape_(self, min_val: float = 0.1, max_val: float = 100.0):
+        """Clamp raw shape parameter in log-space so exp(raw) stays within [min_val, max_val]."""
+        if self._shape.numel() == 0:
+            return
+        with torch.no_grad():
+            device = self._shape.device
+            min_log = self.shape_inverse_activation(torch.tensor(min_val, device=device))
+            max_log = self.shape_inverse_activation(torch.tensor(max_val, device=device))
+            self._shape.data.clamp_(min=min_log, max=max_log)
 
     def construct_list_of_attributes(self):
         l = ['x', 'y', 'z', 'nx', 'ny', 'nz']
