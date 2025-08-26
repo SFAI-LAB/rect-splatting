@@ -40,6 +40,16 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
+    
+    # 초기 Shape 파라미터 정보 출력
+    print("\n=== Initial Shape Parameters ===")
+    initial_shapes = gaussians.get_shape
+    initial_shape_mean = initial_shapes.mean(dim=0)
+    initial_shape_std = initial_shapes.std(dim=0)
+    print(f"Initial Shape X - Mean: {initial_shape_mean[0]:.4f}, Std: {initial_shape_std[0]:.4f}")
+    print(f"Initial Shape Y - Mean: {initial_shape_mean[1]:.4f}, Std: {initial_shape_std[1]:.4f}")
+    print(f"Total Gaussians: {len(initial_shapes)}")
+    print("=================================\n")
 
     iter_start = torch.cuda.Event(enable_timing = True)
     iter_end = torch.cuda.Event(enable_timing = True)
@@ -99,11 +109,20 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
 
             if iteration % 10 == 0:
+                # Shape 파라미터 통계 계산
+                shapes = gaussians.get_shape
+                shape_mean = shapes.mean(dim=0)
+                shape_std = shapes.std(dim=0)
+                shape_min = shapes.min(dim=0)[0]
+                shape_max = shapes.max(dim=0)[0]
+                
                 loss_dict = {
                     "Loss": f"{ema_loss_for_log:.{5}f}",
                     "distort": f"{ema_dist_for_log:.{5}f}",
                     "normal": f"{ema_normal_for_log:.{5}f}",
-                    "Points": f"{len(gaussians.get_xyz)}"
+                    "Points": f"{len(gaussians.get_xyz)}",
+                    "Shape_X": f"{shape_mean[0]:.3f}±{shape_std[0]:.3f}",
+                    "Shape_Y": f"{shape_mean[1]:.3f}±{shape_std[1]:.3f}"
                 }
                 progress_bar.set_postfix(loss_dict)
 
@@ -111,10 +130,34 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             if iteration == opt.iterations:
                 progress_bar.close()
 
+            # Shape 파라미터 상세 출력 (매 100 iteration마다)
+            if iteration % 100 == 0:
+                shapes = gaussians.get_shape
+                print(f"\n[ITER {iteration}] Shape Parameter Statistics:")
+                print(f"  Shape X - Mean: {shape_mean[0]:.4f}, Std: {shape_std[0]:.4f}, Min: {shape_min[0]:.4f}, Max: {shape_max[0]:.4f}")
+                print(f"  Shape Y - Mean: {shape_mean[1]:.4f}, Std: {shape_std[1]:.4f}, Min: {shape_min[1]:.4f}, Max: {shape_max[1]:.4f}")
+                
+                # 다양한 형태 분포 분석
+                circular_count = torch.sum((torch.abs(shapes[:, 0] - shapes[:, 1]) < 0.1)).item()
+                horizontal_count = torch.sum((shapes[:, 0] > shapes[:, 1] + 0.2)).item()
+                vertical_count = torch.sum((shapes[:, 1] > shapes[:, 0] + 0.2)).item()
+                
+                print(f"  Shape Distribution:")
+                print(f"    Circular-like (|x-y| < 0.1): {circular_count} ({100*circular_count/len(shapes):.1f}%)")
+                print(f"    Horizontal-like (x > y+0.2): {horizontal_count} ({100*horizontal_count/len(shapes):.1f}%)")
+                print(f"    Vertical-like (y > x+0.2): {vertical_count} ({100*vertical_count/len(shapes):.1f}%)")
+
             # Log and save
             if tb_writer is not None:
                 tb_writer.add_scalar('train_loss_patches/dist_loss', ema_dist_for_log, iteration)
                 tb_writer.add_scalar('train_loss_patches/normal_loss', ema_normal_for_log, iteration)
+                
+                # Shape 파라미터 텐서보드 로깅
+                if iteration % 10 == 0:
+                    tb_writer.add_scalar('shape_stats/mean_x', shape_mean[0], iteration)
+                    tb_writer.add_scalar('shape_stats/mean_y', shape_mean[1], iteration)
+                    tb_writer.add_scalar('shape_stats/std_x', shape_std[0], iteration)
+                    tb_writer.add_scalar('shape_stats/std_y', shape_std[1], iteration)
 
             training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
             if (iteration in saving_iterations):
@@ -166,6 +209,31 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 except Exception as e:
                     # raise e
                     network_gui.conn = None
+    
+    # 최종 Shape 파라미터 정보 출력
+    print("\n=== Final Shape Parameters ===")
+    final_shapes = gaussians.get_shape
+    final_shape_mean = final_shapes.mean(dim=0)
+    final_shape_std = final_shapes.std(dim=0)
+    final_shape_min = final_shapes.min(dim=0)[0]
+    final_shape_max = final_shapes.max(dim=0)[0]
+    
+    print(f"Final Shape X - Mean: {final_shape_mean[0]:.4f}, Std: {final_shape_std[0]:.4f}, Min: {final_shape_min[0]:.4f}, Max: {final_shape_max[0]:.4f}")
+    print(f"Final Shape Y - Mean: {final_shape_mean[1]:.4f}, Std: {final_shape_std[1]:.4f}, Min: {final_shape_min[1]:.4f}, Max: {final_shape_max[1]:.4f}")
+    
+    # 최종 형태 분포 분석
+    circular_count = torch.sum((torch.abs(final_shapes[:, 0] - final_shapes[:, 1]) < 0.1)).item()
+    horizontal_count = torch.sum((final_shapes[:, 0] > final_shapes[:, 1] + 0.2)).item()
+    vertical_count = torch.sum((final_shapes[:, 1] > final_shapes[:, 0] + 0.2)).item()
+    
+    print(f"Final Shape Distribution:")
+    print(f"  Circular-like (|x-y| < 0.1): {circular_count} ({100*circular_count/len(final_shapes):.1f}%)")
+    print(f"  Horizontal-like (x > y+0.2): {horizontal_count} ({100*horizontal_count/len(final_shapes):.1f}%)")
+    print(f"  Vertical-like (y > x+0.2): {vertical_count} ({100*vertical_count/len(final_shapes):.1f}%)")
+    print(f"Total Final Gaussians: {len(final_shapes)}")
+    print("==============================\n")
+    
+    return gaussians
 
 def prepare_output_and_logger(args):    
     if not args.model_path:
@@ -274,7 +342,7 @@ if __name__ == "__main__":
     # Start GUI server, configure and run training
     network_gui.init(args.ip, args.port)
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
-    training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint)
+    gaussians = training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint)
 
     # All done
     print("\nTraining complete.")

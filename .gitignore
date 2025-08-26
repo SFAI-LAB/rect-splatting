@@ -12,3 +12,6 @@ data
 eval
 *.npz
 **/tmp
+
+#SIBR_viewers
+SIBR_viewers

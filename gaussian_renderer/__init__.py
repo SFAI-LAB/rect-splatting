@@ -75,6 +75,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         cov3D_precomp = (splat2world[:, [0,1,3]] @ world2pix[:,[0,1,3]]).permute(0,2,1).reshape(-1, 9) # column major
     else:
         scales = pc.get_scaling
+        shapes = pc.get_shape
         rotations = pc.get_rotation
     
     # If precomputed colors are provided, use them. Otherwise, if it is desired to precompute colors
@@ -101,6 +102,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         colors_precomp = colors_precomp,
         opacities = opacity,
         scales = scales,
+        shapes = shapes,
         rotations = rotations,
         cov3D_precomp = cov3D_precomp
     )
