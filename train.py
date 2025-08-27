@@ -41,13 +41,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
     
-    # 초기 Shape 파라미터 정보 출력
-    print("\n=== Initial Shape Parameters ===")
+    # 초기 Shape 파라미터 정보 출력 (shapes[:,1] = mix: ellipse↔rectangle)
+    print("\n=== Initial Shape Parameters (mix) ===")
     initial_shapes = gaussians.get_shape
-    initial_shape_mean = initial_shapes.mean(dim=0)
-    initial_shape_std = initial_shapes.std(dim=0)
-    print(f"Initial Shape X - Mean: {initial_shape_mean[0]:.4f}, Std: {initial_shape_std[0]:.4f}")
-    print(f"Initial Shape Y - Mean: {initial_shape_mean[1]:.4f}, Std: {initial_shape_std[1]:.4f}")
+    initial_mix = initial_shapes[:, 1]
+    print(f"Mix(Y) - Mean: {initial_mix.mean():.4f}, Std: {initial_mix.std():.4f}, Min: {initial_mix.min():.4f}, Max: {initial_mix.max():.4f}")
     print(f"Total Gaussians: {len(initial_shapes)}")
     print("=================================\n")
 
@@ -109,20 +107,20 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
 
             if iteration % 10 == 0:
-                # Shape 파라미터 통계 계산
+                # Shape 파라미터 통계 계산 (mix 중심)
                 shapes = gaussians.get_shape
-                shape_mean = shapes.mean(dim=0)
-                shape_std = shapes.std(dim=0)
-                shape_min = shapes.min(dim=0)[0]
-                shape_max = shapes.max(dim=0)[0]
-                
+                mix = shapes[:, 1]
+                mix_mean = mix.mean()
+                mix_std = mix.std()
+                mix_min = mix.min()
+                mix_max = mix.max()
+
                 loss_dict = {
                     "Loss": f"{ema_loss_for_log:.{5}f}",
                     "distort": f"{ema_dist_for_log:.{5}f}",
                     "normal": f"{ema_normal_for_log:.{5}f}",
                     "Points": f"{len(gaussians.get_xyz)}",
-                    "Shape_X": f"{shape_mean[0]:.3f}±{shape_std[0]:.3f}",
-                    "Shape_Y": f"{shape_mean[1]:.3f}±{shape_std[1]:.3f}"
+                    "Mix": f"{mix_mean:.3f}±{mix_std:.3f}"
                 }
                 progress_bar.set_postfix(loss_dict)
 
@@ -133,31 +131,36 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             # Shape 파라미터 상세 출력 (매 100 iteration마다)
             if iteration % 100 == 0:
                 shapes = gaussians.get_shape
-                print(f"\n[ITER {iteration}] Shape Parameter Statistics:")
-                print(f"  Shape X - Mean: {shape_mean[0]:.4f}, Std: {shape_std[0]:.4f}, Min: {shape_min[0]:.4f}, Max: {shape_max[0]:.4f}")
-                print(f"  Shape Y - Mean: {shape_mean[1]:.4f}, Std: {shape_std[1]:.4f}, Min: {shape_min[1]:.4f}, Max: {shape_max[1]:.4f}")
-                
-                # 다양한 형태 분포 분석
-                circular_count = torch.sum((torch.abs(shapes[:, 0] - shapes[:, 1]) < 0.1)).item()
-                horizontal_count = torch.sum((shapes[:, 0] > shapes[:, 1] + 0.2)).item()
-                vertical_count = torch.sum((shapes[:, 1] > shapes[:, 0] + 0.2)).item()
-                
-                print(f"  Shape Distribution:")
-                print(f"    Circular-like (|x-y| < 0.1): {circular_count} ({100*circular_count/len(shapes):.1f}%)")
-                print(f"    Horizontal-like (x > y+0.2): {horizontal_count} ({100*horizontal_count/len(shapes):.1f}%)")
-                print(f"    Vertical-like (y > x+0.2): {vertical_count} ({100*vertical_count/len(shapes):.1f}%)")
+                mix = shapes[:, 1]
+                mix_mean_ = mix.mean().item()
+                mix_std_ = mix.std().item()
+                mix_min_ = mix.min().item()
+                mix_max_ = mix.max().item()
+
+                # mix 분포: 0=타원(L2) ↔ 1=사각(L∞)
+                ellipse_like = torch.sum(mix < 0.33).item()
+                hybrid_like = torch.sum((mix >= 0.33) & (mix < 0.66)).item()
+                rect_like = torch.sum(mix >= 0.66).item()
+                n = len(mix)
+
+                print(f"\n[ITER {iteration}] Shape Mix Statistics (Y as ellipse↔rectangle):")
+                print(f"  Mix - Mean: {mix_mean_:.4f}, Std: {mix_std_:.4f}, Min: {mix_min_:.4f}, Max: {mix_max_:.4f}")
+                print(f"  Mix Distribution:")
+                print(f"    Ellipse-like (mix < 0.33): {ellipse_like} ({100*ellipse_like/n:.1f}%)")
+                print(f"    Hybrid (0.33 ≤ mix < 0.66): {hybrid_like} ({100*hybrid_like/n:.1f}%)")
+                print(f"    Rectangle-like (mix ≥ 0.66): {rect_like} ({100*rect_like/n:.1f}%)")
 
             # Log and save
             if tb_writer is not None:
                 tb_writer.add_scalar('train_loss_patches/dist_loss', ema_dist_for_log, iteration)
                 tb_writer.add_scalar('train_loss_patches/normal_loss', ema_normal_for_log, iteration)
                 
-                # Shape 파라미터 텐서보드 로깅
+                # Shape 파라미터 텐서보드 로깅 (mix 중심)
                 if iteration % 10 == 0:
-                    tb_writer.add_scalar('shape_stats/mean_x', shape_mean[0], iteration)
-                    tb_writer.add_scalar('shape_stats/mean_y', shape_mean[1], iteration)
-                    tb_writer.add_scalar('shape_stats/std_x', shape_std[0], iteration)
-                    tb_writer.add_scalar('shape_stats/std_y', shape_std[1], iteration)
+                    tb_writer.add_scalar('shape_stats/mix_mean', mix_mean, iteration)
+                    tb_writer.add_scalar('shape_stats/mix_std', mix_std, iteration)
+                    tb_writer.add_scalar('shape_stats/mix_min', mix_min, iteration)
+                    tb_writer.add_scalar('shape_stats/mix_max', mix_max, iteration)
 
             training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
             if (iteration in saving_iterations):
@@ -181,7 +184,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             if iteration < opt.iterations:
                 gaussians.optimizer.step()
                 gaussians.optimizer.zero_grad(set_to_none = True)
-                gaussians.clamp_shape_(0.1, 5.0)
+                gaussians.clamp_shape_(0, 1)
 
             if (iteration in checkpoint_iterations):
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
@@ -211,26 +214,21 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     # raise e
                     network_gui.conn = None
     
-    # 최종 Shape 파라미터 정보 출력
-    print("\n=== Final Shape Parameters ===")
+    # 최종 Shape 파라미터 정보 출력 (mix 중심)
+    print("\n=== Final Shape Parameters (mix) ===")
     final_shapes = gaussians.get_shape
-    final_shape_mean = final_shapes.mean(dim=0)
-    final_shape_std = final_shapes.std(dim=0)
-    final_shape_min = final_shapes.min(dim=0)[0]
-    final_shape_max = final_shapes.max(dim=0)[0]
-    
-    print(f"Final Shape X - Mean: {final_shape_mean[0]:.4f}, Std: {final_shape_std[0]:.4f}, Min: {final_shape_min[0]:.4f}, Max: {final_shape_max[0]:.4f}")
-    print(f"Final Shape Y - Mean: {final_shape_mean[1]:.4f}, Std: {final_shape_std[1]:.4f}, Min: {final_shape_min[1]:.4f}, Max: {final_shape_max[1]:.4f}")
-    
-    # 최종 형태 분포 분석
-    circular_count = torch.sum((torch.abs(final_shapes[:, 0] - final_shapes[:, 1]) < 0.1)).item()
-    horizontal_count = torch.sum((final_shapes[:, 0] > final_shapes[:, 1] + 0.2)).item()
-    vertical_count = torch.sum((final_shapes[:, 1] > final_shapes[:, 0] + 0.2)).item()
-    
-    print(f"Final Shape Distribution:")
-    print(f"  Circular-like (|x-y| < 0.1): {circular_count} ({100*circular_count/len(final_shapes):.1f}%)")
-    print(f"  Horizontal-like (x > y+0.2): {horizontal_count} ({100*horizontal_count/len(final_shapes):.1f}%)")
-    print(f"  Vertical-like (y > x+0.2): {vertical_count} ({100*vertical_count/len(final_shapes):.1f}%)")
+    final_mix = final_shapes[:, 1]
+    print(f"Final Mix(Y) - Mean: {final_mix.mean():.4f}, Std: {final_mix.std():.4f}, Min: {final_mix.min():.4f}, Max: {final_mix.max():.4f}")
+
+    # 최종 분포 요약
+    ellipse_like = torch.sum(final_mix < 0.33).item()
+    hybrid_like = torch.sum((final_mix >= 0.33) & (final_mix < 0.66)).item()
+    rect_like = torch.sum(final_mix >= 0.66).item()
+    n_final = len(final_mix)
+    print(f"Final Mix Distribution:")
+    print(f"  Ellipse-like (mix < 0.33): {ellipse_like} ({100*ellipse_like/n_final:.1f}%)")
+    print(f"  Hybrid (0.33 ≤ mix < 0.66): {hybrid_like} ({100*hybrid_like/n_final:.1f}%)")
+    print(f"  Rectangle-like (mix ≥ 0.66): {rect_like} ({100*rect_like/n_final:.1f}%)")
     print(f"Total Final Gaussians: {len(final_shapes)}")
     print("==============================\n")
     

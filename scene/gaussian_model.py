@@ -146,7 +146,9 @@ class GaussianModel:
         opacities = self.inverse_opacity_activation(0.1 * torch.ones((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda"))
         
         # Initialize shape parameters (start with values close to 2 for circular shape)
-        shapes = self.shape_inverse_activation(torch.ones((fused_point_cloud.shape[0], 2), dtype=torch.float, device="cuda") * 2.0)
+        # 초기 shape 설정
+        init_shape = 0.5
+        shapes = self.shape_inverse_activation(torch.ones((fused_point_cloud.shape[0], 2), dtype=torch.float, device="cuda") * init_shape)
 
         self._xyz = nn.Parameter(fused_point_cloud.requires_grad_(True))
         self._features_dc = nn.Parameter(features[:,:,0:1].transpose(1, 2).contiguous().requires_grad_(True))
