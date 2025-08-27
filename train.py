@@ -41,11 +41,16 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
     
-    # 초기 Shape 파라미터 정보 출력 (shapes[:,0] = mix: ellipse↔rectangle)
-    print("\n=== Initial Shape Parameters (mix) ===")
+    # 초기 Shape 파라미터 정보 출력 (alpha: p-norm parameter)
+    print("\n=== Initial Shape Parameters (p-norm alpha) ===")
     initial_shapes = gaussians.get_shape
-    initial_mix = initial_shapes[:, 0]
-    print(f"Mix(Y) - Mean: {initial_mix.mean():.4f}, Std: {initial_mix.std():.4f}, Min: {initial_mix.min():.4f}, Max: {initial_mix.max():.4f}")
+    initial_alpha = initial_shapes[:, 0]
+    # alpha를 p값으로 변환: p = 1 + (p_max - 1) * sigmoid(alpha)
+    p_max = 64.0
+    sigmoid_alpha = torch.sigmoid(initial_alpha)
+    p_values = 1.0 + (p_max - 1.0) * sigmoid_alpha
+    print(f"Alpha - Mean: {initial_alpha.mean():.4f}, Std: {initial_alpha.std():.4f}, Min: {initial_alpha.min():.4f}, Max: {initial_alpha.max():.4f}")
+    print(f"P-norm (computed) - Mean: {p_values.mean():.4f}, Std: {p_values.std():.4f}, Min: {p_values.min():.4f}, Max: {p_values.max():.4f}")
     print(f"Total Gaussians: {len(initial_shapes)}")
     print("=================================\n")
 
@@ -107,20 +112,24 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
 
             if iteration % 10 == 0:
-                # Shape 파라미터 통계 계산 (mix 중심)
+                # Shape 파라미터 통계 계산 (alpha와 p-norm 중심)
                 shapes = gaussians.get_shape
-                mix = shapes[:, 0]
-                mix_mean = mix.mean()
-                mix_std = mix.std()
-                mix_min = mix.min()
-                mix_max = mix.max()
+                alpha = shapes[:, 0]
+                # alpha를 p값으로 변환
+                p_max = 64.0
+                sigmoid_alpha = torch.sigmoid(alpha)
+                p_values = 1.0 + (p_max - 1.0) * sigmoid_alpha
+                alpha_mean = alpha.mean()
+                alpha_std = alpha.std()
+                p_mean = p_values.mean()
 
                 loss_dict = {
                     "Loss": f"{ema_loss_for_log:.{5}f}",
                     "distort": f"{ema_dist_for_log:.{5}f}",
                     "normal": f"{ema_normal_for_log:.{5}f}",
                     "Points": f"{len(gaussians.get_xyz)}",
-                    "Mix": f"{mix_mean:.3f}±{mix_std:.3f}"
+                    "α": f"{alpha_mean:.3f}±{alpha_std:.3f}",
+                    "p": f"{p_mean:.2f}"
                 }
                 progress_bar.set_postfix(loss_dict)
 
@@ -131,36 +140,48 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             # Shape 파라미터 상세 출력 (매 100 iteration마다)
             if iteration % 100 == 0:
                 shapes = gaussians.get_shape
-                mix = shapes[:, 0]
-                mix_mean_ = mix.mean().item()
-                mix_std_ = mix.std().item()
-                mix_min_ = mix.min().item()
-                mix_max_ = mix.max().item()
+                alpha = shapes[:, 0]
+                # alpha를 p값으로 변환
+                p_max = 64.0
+                sigmoid_alpha = torch.sigmoid(alpha)
+                p_values = 1.0 + (p_max - 1.0) * sigmoid_alpha
+                
+                alpha_mean_ = alpha.mean().item()
+                alpha_std_ = alpha.std().item()
+                alpha_min_ = alpha.min().item()
+                alpha_max_ = alpha.max().item()
+                
+                p_mean_ = p_values.mean().item()
+                p_std_ = p_values.std().item()
+                p_min_ = p_values.min().item()
+                p_max_ = p_values.max().item()
 
-                # mix 분포: 0=타원(L2) ↔ 1=사각(L∞)
-                ellipse_like = torch.sum(mix < 0.33).item()
-                hybrid_like = torch.sum((mix >= 0.33) & (mix < 0.66)).item()
-                rect_like = torch.sum(mix >= 0.66).item()
-                n = len(mix)
+                # p값 분포: p=1(L1), p=2(L2), p>>1(L∞)
+                l1_like = torch.sum(p_values < 1.5).item()  # p < 1.5: L1에 가까움
+                l2_like = torch.sum((p_values >= 1.5) & (p_values < 3.0)).item()  # 1.5 ≤ p < 3.0: L2에 가까움
+                linf_like = torch.sum(p_values >= 3.0).item()  # p ≥ 3.0: L∞에 가까움
+                n = len(p_values)
 
-                print(f"\n[ITER {iteration}] Shape Mix Statistics (Y as ellipse↔rectangle):")
-                print(f"  Mix - Mean: {mix_mean_:.4f}, Std: {mix_std_:.4f}, Min: {mix_min_:.4f}, Max: {mix_max_:.4f}")
-                print(f"  Mix Distribution:")
-                print(f"    Ellipse-like (mix < 0.33): {ellipse_like} ({100*ellipse_like/n:.1f}%)")
-                print(f"    Hybrid (0.33 ≤ mix < 0.66): {hybrid_like} ({100*hybrid_like/n:.1f}%)")
-                print(f"    Rectangle-like (mix ≥ 0.66): {rect_like} ({100*rect_like/n:.1f}%)")
+                print(f"\n[ITER {iteration}] Shape P-norm Statistics:")
+                print(f"  Alpha - Mean: {alpha_mean_:.4f}, Std: {alpha_std_:.4f}, Min: {alpha_min_:.4f}, Max: {alpha_max_:.4f}")
+                print(f"  P-norm - Mean: {p_mean_:.4f}, Std: {p_std_:.4f}, Min: {p_min_:.4f}, Max: {p_max_:.4f}")
+                print(f"  P-norm Distribution:")
+                print(f"    L1-like (p < 1.5): {l1_like} ({100*l1_like/n:.1f}%)")
+                print(f"    L2-like (1.5 ≤ p < 3.0): {l2_like} ({100*l2_like/n:.1f}%)")
+                print(f"    L∞-like (p ≥ 3.0): {linf_like} ({100*linf_like/n:.1f}%)")
 
             # Log and save
             if tb_writer is not None:
                 tb_writer.add_scalar('train_loss_patches/dist_loss', ema_dist_for_log, iteration)
                 tb_writer.add_scalar('train_loss_patches/normal_loss', ema_normal_for_log, iteration)
                 
-                # Shape 파라미터 텐서보드 로깅 (mix 중심)
+                # Shape 파라미터 텐서보드 로깅 (alpha와 p-norm 중심)
                 if iteration % 10 == 0:
-                    tb_writer.add_scalar('shape_stats/mix_mean', mix_mean, iteration)
-                    tb_writer.add_scalar('shape_stats/mix_std', mix_std, iteration)
-                    tb_writer.add_scalar('shape_stats/mix_min', mix_min, iteration)
-                    tb_writer.add_scalar('shape_stats/mix_max', mix_max, iteration)
+                    tb_writer.add_scalar('shape_stats/alpha_mean', alpha_mean, iteration)
+                    tb_writer.add_scalar('shape_stats/alpha_std', alpha_std, iteration)
+                    tb_writer.add_scalar('shape_stats/p_mean', p_mean, iteration)
+                    tb_writer.add_scalar('shape_stats/alpha_min', alpha.min(), iteration)
+                    tb_writer.add_scalar('shape_stats/alpha_max', alpha.max(), iteration)
 
             training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
             if (iteration in saving_iterations):
@@ -184,7 +205,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             if iteration < opt.iterations:
                 gaussians.optimizer.step()
                 gaussians.optimizer.zero_grad(set_to_none = True)
-                gaussians.clamp_shape_(0, 1)
 
             if (iteration in checkpoint_iterations):
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
@@ -214,21 +234,27 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     # raise e
                     network_gui.conn = None
     
-    # 최종 Shape 파라미터 정보 출력 (mix 중심)
-    print("\n=== Final Shape Parameters (mix) ===")
+    # 최종 Shape 파라미터 정보 출력 (alpha와 p-norm 중심)
+    print("\n=== Final Shape Parameters (p-norm alpha) ===")
     final_shapes = gaussians.get_shape
-    final_mix = final_shapes[:, 0]
-    print(f"Final Mix(Y) - Mean: {final_mix.mean():.4f}, Std: {final_mix.std():.4f}, Min: {final_mix.min():.4f}, Max: {final_mix.max():.4f}")
+    final_alpha = final_shapes[:, 0]
+    # alpha를 p값으로 변환
+    p_max = 64.0
+    sigmoid_final_alpha = torch.sigmoid(final_alpha)
+    final_p_values = 1.0 + (p_max - 1.0) * sigmoid_final_alpha
+    
+    print(f"Final Alpha - Mean: {final_alpha.mean():.4f}, Std: {final_alpha.std():.4f}, Min: {final_alpha.min():.4f}, Max: {final_alpha.max():.4f}")
+    print(f"Final P-norm - Mean: {final_p_values.mean():.4f}, Std: {final_p_values.std():.4f}, Min: {final_p_values.min():.4f}, Max: {final_p_values.max():.4f}")
 
     # 최종 분포 요약
-    ellipse_like = torch.sum(final_mix < 0.33).item()
-    hybrid_like = torch.sum((final_mix >= 0.33) & (final_mix < 0.66)).item()
-    rect_like = torch.sum(final_mix >= 0.66).item()
-    n_final = len(final_mix)
-    print(f"Final Mix Distribution:")
-    print(f"  Ellipse-like (mix < 0.33): {ellipse_like} ({100*ellipse_like/n_final:.1f}%)")
-    print(f"  Hybrid (0.33 ≤ mix < 0.66): {hybrid_like} ({100*hybrid_like/n_final:.1f}%)")
-    print(f"  Rectangle-like (mix ≥ 0.66): {rect_like} ({100*rect_like/n_final:.1f}%)")
+    l1_like = torch.sum(final_p_values < 1.5).item()
+    l2_like = torch.sum((final_p_values >= 1.5) & (final_p_values < 3.0)).item()
+    linf_like = torch.sum(final_p_values >= 3.0).item()
+    n_final = len(final_p_values)
+    print(f"Final P-norm Distribution:")
+    print(f"  L1-like (p < 1.5): {l1_like} ({100*l1_like/n_final:.1f}%)")
+    print(f"  L2-like (1.5 ≤ p < 3.0): {l2_like} ({100*l2_like/n_final:.1f}%)")
+    print(f"  L∞-like (p ≥ 3.0): {linf_like} ({100*linf_like/n_final:.1f}%)")
     print(f"Total Final Gaussians: {len(final_shapes)}")
     print("==============================\n")
     

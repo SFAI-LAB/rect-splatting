@@ -25,17 +25,21 @@ class GaussianModel:
 
     def setup_functions(self):
         def build_covariance_from_scaling_rotation(center, scaling, scaling_modifier, rotation):
-            RS = build_scaling_rotation(torch.cat([scaling * scaling_modifier, torch.ones_like(scaling)], dim=-1), rotation).permute(0,2,1)
+            RS = build_scaling_rotation(
+                torch.cat([scaling * scaling_modifier, torch.ones_like(scaling)], dim=-1), rotation
+            ).permute(0, 2, 1)
             trans = torch.zeros((center.shape[0], 4, 4), dtype=torch.float, device="cuda")
-            trans[:,:3,:3] = RS
-            trans[:, 3,:3] = center
+            trans[:, :3, :3] = RS
+            trans[:, 3, :3] = center
             trans[:, 3, 3] = 1
             return trans
-        
+
+        # Activations
         self.scaling_activation = torch.exp
         self.scaling_inverse_activation = torch.log
-        self.shape_activation = torch.exp
-        self.shape_inverse_activation = torch.log
+        # Shape represents raw alpha for p-norm: p = 1 + (p_max-1) * sigmoid(alpha)
+        self.shape_activation = (lambda x: x)
+        self.shape_inverse_activation = (lambda x: x)
         self.covariance_activation = build_covariance_from_scaling_rotation
         self.opacity_activation = torch.sigmoid
         self.inverse_opacity_activation = inverse_sigmoid
@@ -96,7 +100,7 @@ class GaussianModel:
 
     @property
     def get_scaling(self):
-        return self.scaling_activation(self._scaling) #.clamp(max=1)
+        return self.scaling_activation(self._scaling)
     
     @property
     def get_rotation(self):
@@ -118,8 +122,7 @@ class GaussianModel:
     
     @property
     def get_shape(self):
-        # Expose shape in a safe bounded range to avoid degenerate projections
-        # Requested clamp: [0.1, 100]
+        # Expose raw alpha (no activation). This is consumed by CUDA directly.
         return self.shape_activation(self._shape)
 
     def get_covariance(self, scaling_modifier = 1):
@@ -147,10 +150,14 @@ class GaussianModel:
             0.1 * torch.ones((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda")
         )
 
-        # Initialize scalar shape mix ratio in (0,1); use 0.5 as default
-        init_shape = 0.5
+        # Initialize p-norm to start at p_init = 2.0 (L2)
+        # CUDA uses: p = 1 + (p_max - 1) * sigmoid(alpha), with p_max=64
+        p_init = 2.0
+        p_max = 64.0
+        s = (p_init - 1.0) / (p_max - 1.0)  # target sigmoid(alpha)
+        alpha0 = inverse_sigmoid(torch.tensor(s, device="cuda", dtype=torch.float))  # logit(s)
         shapes = self.shape_inverse_activation(
-            torch.ones((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda") * init_shape
+            torch.ones((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda") * alpha0
         )
 
         self._xyz = nn.Parameter(fused_point_cloud.requires_grad_(True))
@@ -190,16 +197,6 @@ class GaussianModel:
                 lr = self.xyz_scheduler_args(iteration)
                 param_group['lr'] = lr
                 return lr
-            
-    def clamp_shape_(self, min_val: float = 0.1, max_val: float = 100.0):
-        """Clamp raw shape parameter in log-space so exp(raw) stays within [min_val, max_val]."""
-        if self._shape.numel() == 0:
-            return
-        with torch.no_grad():
-            device = self._shape.device
-            min_log = self.shape_inverse_activation(torch.tensor(min_val, device=device))
-            max_log = self.shape_inverse_activation(torch.tensor(max_val, device=device))
-            self._shape.data.clamp_(min=min_log, max=max_log)
 
     def construct_list_of_attributes(self):
         l = ['x', 'y', 'z', 'nx', 'ny', 'nz']
