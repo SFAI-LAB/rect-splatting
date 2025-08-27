@@ -41,10 +41,10 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
     
-    # 초기 Shape 파라미터 정보 출력 (shapes[:,1] = mix: ellipse↔rectangle)
+    # 초기 Shape 파라미터 정보 출력 (shapes[:,0] = mix: ellipse↔rectangle)
     print("\n=== Initial Shape Parameters (mix) ===")
     initial_shapes = gaussians.get_shape
-    initial_mix = initial_shapes[:, 1]
+    initial_mix = initial_shapes[:, 0]
     print(f"Mix(Y) - Mean: {initial_mix.mean():.4f}, Std: {initial_mix.std():.4f}, Min: {initial_mix.min():.4f}, Max: {initial_mix.max():.4f}")
     print(f"Total Gaussians: {len(initial_shapes)}")
     print("=================================\n")
@@ -109,7 +109,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             if iteration % 10 == 0:
                 # Shape 파라미터 통계 계산 (mix 중심)
                 shapes = gaussians.get_shape
-                mix = shapes[:, 1]
+                mix = shapes[:, 0]
                 mix_mean = mix.mean()
                 mix_std = mix.std()
                 mix_min = mix.min()
@@ -131,7 +131,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             # Shape 파라미터 상세 출력 (매 100 iteration마다)
             if iteration % 100 == 0:
                 shapes = gaussians.get_shape
-                mix = shapes[:, 1]
+                mix = shapes[:, 0]
                 mix_mean_ = mix.mean().item()
                 mix_std_ = mix.std().item()
                 mix_min_ = mix.min().item()
@@ -217,7 +217,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     # 최종 Shape 파라미터 정보 출력 (mix 중심)
     print("\n=== Final Shape Parameters (mix) ===")
     final_shapes = gaussians.get_shape
-    final_mix = final_shapes[:, 1]
+    final_mix = final_shapes[:, 0]
     print(f"Final Mix(Y) - Mean: {final_mix.mean():.4f}, Std: {final_mix.std():.4f}, Min: {final_mix.min():.4f}, Max: {final_mix.max():.4f}")
 
     # 최종 분포 요약
