@@ -22,13 +22,14 @@ from tqdm import tqdm
 from utils.image_utils import psnr, render_net_image
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
+from utils.visualization import RealTimeHistogramVisualizer, BarHistogramVisualizer, Simple2DHistogramVisualizer
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
 except ImportError:
     TENSORBOARD_FOUND = False
 
-def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint):
+def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, enable_visualization=True):
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
     gaussians = GaussianModel(dataset.sh_degree)
@@ -40,6 +41,28 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
+    
+    # 실시간 히스토그램 시각화 초기화
+    histogram_viz = None
+    bar_viz = None
+    simple_viz = None
+    if enable_visualization:
+        try:
+            # 간단한 2D 버전 (권장) - 초기 p_max를 64로 설정
+            simple_viz = Simple2DHistogramVisualizer(max_history=200, update_interval=25, p_min=1.0, p_max=5.0, num_bins=30)
+            
+            # Surface plot 스타일 (선택적) - 초기 p_max를 64로 설정
+            histogram_viz = RealTimeHistogramVisualizer(max_history=100, update_interval=100, p_min=1.0, p_max=5.0, num_bins=32)
+            
+            # Bar plot 스타일 (선택적, 리소스 집약적)
+            # bar_viz = BarHistogramVisualizer(max_history=50, update_interval=300, p_min=1.0, p_max=64.0, num_bins=25)
+            
+            print("Real-time histogram visualization enabled (2D + 3D) with dynamic P-norm range")
+        except Exception as e:
+            print(f"Failed to initialize histogram visualization: {e}")
+            histogram_viz = None
+            bar_viz = None
+            simple_viz = None
     
     # 초기 Shape 파라미터 정보 출력 (alpha: p-norm parameter)
     print("\n=== Initial Shape Parameters (p-norm alpha) ===")
@@ -123,6 +146,34 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 alpha_std = alpha.std()
                 p_mean = p_values.mean()
 
+                # 실시간 히스토그램 시각화 데이터 추가 및 업데이트
+                # 2D 간단한 시각화 (우선순위)
+                if simple_viz is not None:
+                    simple_viz.add_data(iteration, p_values)
+                    if simple_viz.should_update(iteration):
+                        try:
+                            simple_viz.update_plot()
+                        except Exception as e:
+                            print(f"Simple visualization error: {e}")
+                
+                # 3D Surface 시각화
+                if histogram_viz is not None:
+                    histogram_viz.add_data(iteration, p_values)
+                    if histogram_viz.should_update(iteration):
+                        try:
+                            histogram_viz.update_plot()
+                        except Exception as e:
+                            print(f"3D histogram visualization error: {e}")
+                
+                # 3D Bar 시각화 (선택적)
+                if bar_viz is not None:
+                    bar_viz.add_data(iteration, p_values)
+                    if bar_viz.should_update(iteration):
+                        try:
+                            bar_viz.update_plot()
+                        except Exception as e:
+                            print(f"Bar histogram visualization error: {e}")
+
                 loss_dict = {
                     "Loss": f"{ema_loss_for_log:.{5}f}",
                     "distort": f"{ema_dist_for_log:.{5}f}",
@@ -154,7 +205,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 p_mean_ = p_values.mean().item()
                 p_std_ = p_values.std().item()
                 p_min_ = p_values.min().item()
-                p_max_ = p_values.max().item()
+                p_max_actual = p_values.max().item()
 
                 # p값 분포: p=1(L1), p=2(L2), p>>1(L∞)
                 l1_like = torch.sum(p_values < 1.5).item()  # p < 1.5: L1에 가까움
@@ -164,7 +215,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
                 print(f"\n[ITER {iteration}] Shape P-norm Statistics:")
                 print(f"  Alpha - Mean: {alpha_mean_:.4f}, Std: {alpha_std_:.4f}, Min: {alpha_min_:.4f}, Max: {alpha_max_:.4f}")
-                print(f"  P-norm - Mean: {p_mean_:.4f}, Std: {p_std_:.4f}, Min: {p_min_:.4f}, Max: {p_max_:.4f}")
+                print(f"  P-norm - Mean: {p_mean_:.4f}, Std: {p_std_:.4f}, Min: {p_min_:.4f}, Max: {p_max_actual:.4f}")
                 print(f"  P-norm Distribution:")
                 print(f"    L1-like (p < 1.5): {l1_like} ({100*l1_like/n:.1f}%)")
                 print(f"    L2-like (1.5 ≤ p < 3.0): {l2_like} ({100*l2_like/n:.1f}%)")
@@ -243,8 +294,10 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     sigmoid_final_alpha = torch.sigmoid(final_alpha)
     final_p_values = 1.0 + (p_max - 1.0) * sigmoid_final_alpha
     
+    final_p_max_actual = final_p_values.max().item()
+    
     print(f"Final Alpha - Mean: {final_alpha.mean():.4f}, Std: {final_alpha.std():.4f}, Min: {final_alpha.min():.4f}, Max: {final_alpha.max():.4f}")
-    print(f"Final P-norm - Mean: {final_p_values.mean():.4f}, Std: {final_p_values.std():.4f}, Min: {final_p_values.min():.4f}, Max: {final_p_values.max():.4f}")
+    print(f"Final P-norm - Mean: {final_p_values.mean():.4f}, Std: {final_p_values.std():.4f}, Min: {final_p_values.min():.4f}, Max: {final_p_max_actual:.4f}")
 
     # 최종 분포 요약
     l1_like = torch.sum(final_p_values < 1.5).item()
@@ -256,7 +309,31 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     print(f"  L2-like (1.5 ≤ p < 3.0): {l2_like} ({100*l2_like/n_final:.1f}%)")
     print(f"  L∞-like (p ≥ 3.0): {linf_like} ({100*linf_like/n_final:.1f}%)")
     print(f"Total Final Gaussians: {len(final_shapes)}")
+    print(f"Actual P-norm range: 1.0 - {final_p_max_actual:.4f}")
     print("==============================\n")
+    
+    # 최종 히스토그램 저장
+    if simple_viz is not None:
+        try:
+            final_save_path = os.path.join(dataset.model_path, "final_p_histogram_2d.png")
+            simple_viz.save_final_plot(final_save_path)
+            simple_viz.close()
+        except Exception as e:
+            print(f"Failed to save final 2D histogram: {e}")
+    
+    if histogram_viz is not None:
+        try:
+            final_save_path = os.path.join(dataset.model_path, "final_p_histogram_3d.png")
+            histogram_viz.save_final_plot(final_save_path)
+            histogram_viz.close()
+        except Exception as e:
+            print(f"Failed to save final 3D histogram: {e}")
+    
+    if bar_viz is not None:
+        try:
+            bar_viz.close()
+        except Exception as e:
+            print(f"Failed to close bar visualization: {e}")
     
     return gaussians
 
@@ -356,6 +433,7 @@ if __name__ == "__main__":
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--start_checkpoint", type=str, default = None)
+    parser.add_argument("--disable_visualization", action="store_true", help="Disable real-time histogram visualization")
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
     
@@ -367,7 +445,7 @@ if __name__ == "__main__":
     # Start GUI server, configure and run training
     network_gui.init(args.ip, args.port)
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
-    gaussians = training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint)
+    gaussians = training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, enable_visualization=not args.disable_visualization)
 
     # All done
     print("\nTraining complete.")
