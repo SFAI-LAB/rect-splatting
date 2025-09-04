@@ -48,16 +48,16 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     simple_viz = None
     if enable_visualization:
         try:
-            # 간단한 2D 버전 (권장) - 초기 p_max를 64로 설정
+            # 간단한 2D 버전 (권장) - 초기 p_max를 5로 설정
             simple_viz = Simple2DHistogramVisualizer(max_history=200, update_interval=25, p_min=1.0, p_max=5.0, num_bins=30)
             
-            # Surface plot 스타일 (선택적) - 초기 p_max를 64로 설정
-            histogram_viz = RealTimeHistogramVisualizer(max_history=100, update_interval=100, p_min=1.0, p_max=5.0, num_bins=32)
+            # Surface plot 스타일 (선택적) - 전체 iteration 데이터 저장
+            histogram_viz = RealTimeHistogramVisualizer(max_history=100, update_interval=100, p_min=1.0, p_max=5.0, num_bins=32, store_all_data=True)
             
             # Bar plot 스타일 (선택적, 리소스 집약적)
-            # bar_viz = BarHistogramVisualizer(max_history=50, update_interval=300, p_min=1.0, p_max=64.0, num_bins=25)
+            # bar_viz = BarHistogramVisualizer(max_history=50, update_interval=300, p_min=1.0, p_max=5.0, num_bins=25)
             
-            print("Real-time histogram visualization enabled (2D + 3D) with dynamic P-norm range")
+            print("Real-time histogram visualization enabled (2D + 3D with full iteration history)")
         except Exception as e:
             print(f"Failed to initialize histogram visualization: {e}")
             histogram_viz = None

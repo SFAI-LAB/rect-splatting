@@ -142,9 +142,59 @@ class Simple2DHistogramVisualizer:
             plt.pause(0.01)
             
     def save_final_plot(self, save_path):
-        """최종 플롯을 파일로 저장"""
-        if self.fig is not None:
+        """최종 플롯을 파일로 저장 - 마지막 iteration의 2D 히스토그램만"""
+        if len(self.iterations) == 0:
+            print("No data to save")
+            return
+            
+        with self.data_lock:
+            # 새로운 figure 생성 (2D 히스토그램만)
+            fig, ax = plt.subplots(1, 1, figsize=(10, 6))
+            
+            iterations = list(self.iterations)
+            distributions = list(self.p_distributions)
+            
+            if len(distributions) == 0:
+                print("No distribution data to save")
+                return
+                
+            # 마지막 iteration의 분포만 사용
+            final_dist = distributions[-1]
+            final_iter = iterations[-1]
+            
+            # 막대 그래프로 표시
+            bars = ax.bar(self.p_centers, final_dist, 
+                         width=self.p_centers[1]-self.p_centers[0], 
+                         alpha=0.7, color='skyblue', edgecolor='navy', linewidth=0.8)
+            
+            # 특별한 p값 영역 표시
+            ax.axvline(x=1.5, color='red', linestyle='--', alpha=0.7, label='L1-L2 boundary')
+            ax.axvline(x=3.0, color='orange', linestyle='--', alpha=0.7, label='L2-L∞ boundary')
+            
+            # 제목과 레이블 설정
+            ax.set_title(f'Final P-norm Distribution (Iteration: {final_iter})', fontsize=16, fontweight='bold')
+            ax.set_xlabel('P-norm Value', fontsize=14)
+            ax.set_ylabel('Proportion', fontsize=14)
+            ax.grid(True, alpha=0.3)
+            ax.legend(fontsize=12)
+            
+            # p값 범위 표시
+            ax.set_xlim(self.p_min, self.p_max)
+            
+            # 통계 정보 추가
+            max_prop = max(final_dist)
+            max_p_idx = np.argmax(final_dist)
+            peak_p = self.p_centers[max_p_idx]
+            
+            # 텍스트 박스로 통계 정보 표시
+            stats_text = f'Peak at p={peak_p:.2f}\nMax proportion: {max_prop:.3f}\nTotal bins: {len(final_dist)}'
+            ax.text(0.02, 0.98, stats_text, transform=ax.transAxes, fontsize=10,
+                   verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
+            
+            plt.tight_layout()
             plt.savefig(save_path, dpi=300, bbox_inches='tight')
+            plt.close(fig)  # 메모리 정리
+            
             print(f"Final 2D histogram plot saved to: {save_path}")
             
     def close(self):
@@ -154,25 +204,35 @@ class Simple2DHistogramVisualizer:
             plt.ioff()
 
 class RealTimeHistogramVisualizer:
-    def __init__(self, max_history=100, update_interval=100, p_min=1.0, p_max=10.0, num_bins=32):
+    def __init__(self, max_history=100, update_interval=100, p_min=1.0, p_max=10.0, num_bins=32, store_all_data=True):
         """
         실시간 p값 분포 3D 히스토그램 시각화
         
         Args:
-            max_history: 저장할 최대 히스토리 개수
+            max_history: 저장할 최대 히스토리 개수 (store_all_data=False일 때만 적용)
             update_interval: 히스토그램 업데이트 간격 (iterations)
             p_min: P-norm 최소값
             p_max: P-norm 초기 최대값 (동적으로 조정됨)
             num_bins: 히스토그램 빈 개수
+            store_all_data: 전체 iteration 데이터를 저장할지 여부
         """
         self.max_history = max_history
         self.update_interval = update_interval
+        self.store_all_data = store_all_data
         
         # 데이터 저장용
-        self.iterations = deque(maxlen=max_history)
-        self.p_distributions = deque(maxlen=max_history)
-        self.normalized_distributions = deque(maxlen=max_history)
-        self.raw_distributions = deque(maxlen=max_history)
+        if store_all_data:
+            # 전체 데이터 저장 (리스트 사용)
+            self.iterations = []
+            self.normalized_distributions = []
+            self.raw_distributions = []
+        else:
+            # 제한된 히스토리 저장 (deque 사용)
+            self.iterations = deque(maxlen=max_history)
+            self.normalized_distributions = deque(maxlen=max_history)
+            self.raw_distributions = deque(maxlen=max_history)
+        
+        self.p_distributions = deque(maxlen=max_history)  # 이건 항상 deque 사용
         
         # p값 범위 설정 (동적으로 조정됨)
         self.p_min = p_min
@@ -216,9 +276,15 @@ class RealTimeHistogramVisualizer:
             counts, _ = np.histogram(p_values_np, bins=self.p_bins)
             normalized_counts = counts / len(p_values_np)  # 정규화 (비율)
             
-            self.iterations.append(iteration)
-            self.raw_distributions.append(counts)
-            self.normalized_distributions.append(normalized_counts)
+            # 데이터 저장 방식 선택
+            if self.store_all_data:
+                self.iterations.append(iteration)
+                self.raw_distributions.append(counts)
+                self.normalized_distributions.append(normalized_counts)
+            else:
+                self.iterations.append(iteration)
+                self.raw_distributions.append(counts)
+                self.normalized_distributions.append(normalized_counts)
             
     def should_update(self, iteration):
         """업데이트 여부 판단"""
@@ -268,6 +334,14 @@ class RealTimeHistogramVisualizer:
             
             if len(iterations) == 0:
                 return
+            
+            # 전체 데이터를 사용하되, 너무 많으면 샘플링
+            if self.store_all_data and len(iterations) > 200:
+                # 너무 많은 데이터가 있으면 균등하게 샘플링
+                step = max(1, len(iterations) // 200)
+                iterations = iterations[::step]
+                normalized_dists = normalized_dists[::step]
+                raw_dists = raw_dists[::step]
                 
             # X, Y 좌표 생성 (동적 범위 사용)
             p_centers = (self.p_bins[:-1] + self.p_bins[1:]) / 2
@@ -279,14 +353,16 @@ class RealTimeHistogramVisualizer:
             
             # 첫 번째 플롯: 정규화된 분포
             self.ax1.plot_surface(X, Y, Z_normalized, cmap=cm.viridis, alpha=0.8)
-            self.ax1.set_title(f'Normalized P-norm Distribution (Range: 1.0-{self.p_max:.1f})', fontsize=14)
+            total_iters = len(self.iterations)
+            shown_iters = len(iterations)
+            self.ax1.set_title(f'Normalized P-norm Distribution (Showing {shown_iters}/{total_iters} iters)', fontsize=14)
             self.ax1.set_xlabel('P-norm Value', fontsize=12)
             self.ax1.set_ylabel('Iteration', fontsize=12)
             self.ax1.set_zlabel('Proportion', fontsize=12)
             
             # 두 번째 플롯: 원시 개수 분포
             self.ax2.plot_surface(X, Y, Z_raw, cmap=cm.plasma, alpha=0.8)
-            self.ax2.set_title(f'Raw P-norm Distribution (Range: 1.0-{self.p_max:.1f})', fontsize=14)
+            self.ax2.set_title(f'Raw P-norm Distribution (Showing {shown_iters}/{total_iters} iters)', fontsize=14)
             self.ax2.set_xlabel('P-norm Value', fontsize=12)
             self.ax2.set_ylabel('Iteration', fontsize=12)
             self.ax2.set_zlabel('Count', fontsize=12)
@@ -353,8 +429,70 @@ class RealTimeHistogramVisualizer:
     def save_final_plot(self, save_path):
         """최종 플롯을 파일로 저장"""
         if self.fig is not None:
+            # 최종 저장 시에는 전체 데이터 사용
+            self.plot_final_full_data()
             plt.savefig(save_path, dpi=300, bbox_inches='tight')
             print(f"Final histogram plot saved to: {save_path}")
+            
+    def plot_final_full_data(self):
+        """최종 저장용: 전체 데이터를 사용하여 플롯 생성"""
+        if len(self.iterations) == 0:
+            return
+            
+        with self.data_lock:
+            if self.fig is None:
+                self.initialize_plot()
+                
+            # 기존 플롯 클리어
+            self.ax1.clear()
+            self.ax2.clear()
+            
+            # 전체 데이터 사용
+            iterations = list(self.iterations)
+            normalized_dists = list(self.normalized_distributions)
+            raw_dists = list(self.raw_distributions)
+            
+            if len(iterations) == 0:
+                return
+                
+            print(f"Plotting final histogram with {len(iterations)} iterations...")
+            
+            # 데이터가 너무 많으면 적절히 샘플링 (하지만 더 많이 보여줌)
+            if len(iterations) > 500:
+                step = max(1, len(iterations) // 500)
+                iterations = iterations[::step]
+                normalized_dists = normalized_dists[::step]
+                raw_dists = raw_dists[::step]
+                print(f"Downsampled to {len(iterations)} points for visualization")
+                
+            # X, Y 좌표 생성
+            p_centers = (self.p_bins[:-1] + self.p_bins[1:]) / 2
+            X, Y = np.meshgrid(p_centers, iterations)
+            
+            # Z 데이터 준비
+            Z_normalized = np.array(normalized_dists)
+            Z_raw = np.array(raw_dists)
+            
+            # 첫 번째 플롯: 정규화된 분포
+            self.ax1.plot_surface(X, Y, Z_normalized, cmap=cm.viridis, alpha=0.8)
+            total_iters = len(self.iterations)
+            self.ax1.set_title(f'Final Normalized P-norm Distribution ({total_iters} total iters)', fontsize=14)
+            self.ax1.set_xlabel('P-norm Value', fontsize=12)
+            self.ax1.set_ylabel('Iteration', fontsize=12)
+            self.ax1.set_zlabel('Proportion', fontsize=12)
+            
+            # 두 번째 플롯: 원시 개수 분포
+            self.ax2.plot_surface(X, Y, Z_raw, cmap=cm.plasma, alpha=0.8)
+            self.ax2.set_title(f'Final Raw P-norm Distribution ({total_iters} total iters)', fontsize=14)
+            self.ax2.set_xlabel('P-norm Value', fontsize=12)
+            self.ax2.set_ylabel('Iteration', fontsize=12)
+            self.ax2.set_zlabel('Count', fontsize=12)
+            
+            # 뷰 각도 설정
+            self.ax1.view_init(elev=20, azim=45)
+            self.ax2.view_init(elev=20, azim=45)
+            
+            plt.tight_layout()
             
     def close(self):
         """리소스 정리"""
@@ -365,14 +503,20 @@ class RealTimeHistogramVisualizer:
 class BarHistogramVisualizer:
     """바 히스토그램 스타일 시각화 (더 명확한 분포 표현)"""
     
-    def __init__(self, max_history=50, update_interval=100, p_min=1.0, p_max=10.0, num_bins=20):
+    def __init__(self, max_history=50, update_interval=100, p_min=1.0, p_max=10.0, num_bins=20, store_all_data=False):
         self.max_history = max_history
         self.update_interval = update_interval
+        self.store_all_data = store_all_data
         
         # 데이터 저장용
-        self.iterations = deque(maxlen=max_history)
-        self.normalized_distributions = deque(maxlen=max_history)
-        self.raw_distributions = deque(maxlen=max_history)
+        if store_all_data:
+            self.iterations = []
+            self.normalized_distributions = []
+            self.raw_distributions = []
+        else:
+            self.iterations = deque(maxlen=max_history)
+            self.normalized_distributions = deque(maxlen=max_history)
+            self.raw_distributions = deque(maxlen=max_history)
         
         # p값 범위 설정 (동적으로 조정됨)
         self.p_min = p_min
