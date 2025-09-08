@@ -153,7 +153,7 @@ class GaussianModel:
         # Initialize p-norm to start at p_init = 2.0 (L2)
         # CUDA uses: p = 1 + (p_max - 1) * sigmoid(alpha), with p_max=64
         p_init = 2.0
-        p_max = 64.0
+        p_max = 5.0
         s = (p_init - 1.0) / (p_max - 1.0)  # target sigmoid(alpha)
         alpha0 = inverse_sigmoid(torch.tensor(s, device="cuda", dtype=torch.float))  # logit(s)
         shapes = self.shape_inverse_activation(

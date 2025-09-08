@@ -69,7 +69,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     initial_shapes = gaussians.get_shape
     initial_alpha = initial_shapes[:, 0]
     # alpha를 p값으로 변환: p = 1 + (p_max - 1) * sigmoid(alpha)
-    p_max = 64.0
+    p_max = 5.0
     sigmoid_alpha = torch.sigmoid(initial_alpha)
     p_values = 1.0 + (p_max - 1.0) * sigmoid_alpha
     print(f"Alpha - Mean: {initial_alpha.mean():.4f}, Std: {initial_alpha.std():.4f}, Min: {initial_alpha.min():.4f}, Max: {initial_alpha.max():.4f}")
@@ -139,7 +139,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 shapes = gaussians.get_shape
                 alpha = shapes[:, 0]
                 # alpha를 p값으로 변환
-                p_max = 64.0
+                p_max = 5.0
                 sigmoid_alpha = torch.sigmoid(alpha)
                 p_values = 1.0 + (p_max - 1.0) * sigmoid_alpha
                 alpha_mean = alpha.mean()
@@ -193,7 +193,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 shapes = gaussians.get_shape
                 alpha = shapes[:, 0]
                 # alpha를 p값으로 변환
-                p_max = 64.0
+                p_max = 5.0
                 sigmoid_alpha = torch.sigmoid(alpha)
                 p_values = 1.0 + (p_max - 1.0) * sigmoid_alpha
                 
@@ -290,7 +290,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     final_shapes = gaussians.get_shape
     final_alpha = final_shapes[:, 0]
     # alpha를 p값으로 변환
-    p_max = 64.0
+    p_max = 5.0
     sigmoid_final_alpha = torch.sigmoid(final_alpha)
     final_p_values = 1.0 + (p_max - 1.0) * sigmoid_final_alpha
     
