@@ -444,3 +444,56 @@ class GaussianModel:
     def add_densification_stats(self, viewspace_point_tensor, update_filter):
         self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor.grad[update_filter], dim=-1, keepdim=True)
         self.denom[update_filter] += 1
+
+     # ==================================================================================
+    # TGS 버전의 압축 코드 추가
+    # ==================================================================================
+    def compress_gaussians(self):
+            """
+            (1, 2) 스케일, 즉 원반 형태의 가우시안에 맞춰 동작하는 압축 코드입니다.
+            """
+            means = self._xyz.data # 위치값, [N, 3] 크기
+            log_scales = self._scaling.data # 로그 스케일, [N, 2] 크기
+            scales = torch.exp(log_scales) # 실제 스케일, [N, 2] 크기
+
+            num = means.shape[0]
+            keep = []
+            merged = torch.zeros(num, dtype=torch.bool, device=means.device)
+
+            for i in range(num):
+                if merged[i]:
+                    continue
+                
+                keep.append(i)
+                # scales[i]는 [2] 크기의 텐서이며, .mean()은 두 값의 평균을 계산합니다.
+                s_i = scales[i].mean()
+                th = 0.01 + (0.05 - 0.01) * (s_i / scales.max())
+                dist = torch.norm(means - means[i], dim=1)
+                mask = (dist < th) & (~merged)
+
+                group_idx = mask.nonzero(as_tuple=False).squeeze(1)
+
+                if len(group_idx) > 1:
+                    # scales[group_idx]는 [그룹 크기, 2]가 되며, .mean(dim=1)은
+                    # 각 가우시안의 두 스케일 값의 평균을 가중치로 사용합니다.
+                    weights = scales[group_idx].mean(dim=1)
+                    W = weights.sum()
+                    
+                    # 위치(mean)는 여전히 3D로 계산됩니다.
+                    new_mean = (means[group_idx] * weights[:, None]).sum(0) / W
+                    
+                    # 스케일(scale)은 2D로 계산됩니다.
+                    # (scales[group_idx] * weights[:, None])의 가중합 결과는 [2] 크기의 텐서가 됩니다.
+                    new_scale = (scales[group_idx] * weights[:, None]).sum(0) / W
+                    
+                    means[i] = new_mean
+                    # 새로운 [2] 크기의 스케일을 i번째 가우시안에 할당합니다.
+                    log_scales[i] = torch.log(new_scale)
+                
+                merged[group_idx] = True
+                merged[i] = False
+
+            keep_mask = torch.zeros(num, dtype=torch.bool, device=means.device)
+            keep_mask[keep] = True
+            
+            self.prune_points(~keep_mask)

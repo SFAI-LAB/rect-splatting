@@ -29,6 +29,11 @@ try:
 except ImportError:
     TENSORBOARD_FOUND = False
 
+class OptimizationParams(OptimizationParams): # 기존 클래스를 상속받아 확장
+    def __init__(self, parser):
+        super().__init__(parser)
+        self.pcgs_interval = 1 # 압축 비활성화를 기본값으로 설정, 양수로 주면 활성화
+
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, enable_visualization=True):
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
@@ -249,6 +254,14 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     size_threshold = 20 if iteration > opt.opacity_reset_interval else None
                     gaussians.densify_and_prune(opt.densify_grad_threshold, opt.opacity_cull, scene.cameras_extent, size_threshold)
                 
+                # ==================================================================================
+                # 2. 압축 기능 호출 코드 (트리거) 추가
+                # ==================================================================================
+                # opt.pcgs_interval이 양수일 경우에만 주기적으로 압축 실행
+                if hasattr(opt, 'pcgs_interval') and iteration > 0 and opt.pcgs_interval > 0 and iteration % opt.pcgs_interval == 0:
+                    gaussians.compress_gaussians()
+                    print(f"\n[ITER {iteration}] Compressed Gaussians.")
+                # ==================================================================================
                 if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
                     gaussians.reset_opacity()
 
